@@ -229,6 +229,12 @@
                 <!-- Quick Prompts -->
                 <div class="px-6 py-2.5 bg-slate-50/70 border-b border-slate-100 flex items-center gap-2 overflow-x-auto text-xs whitespace-nowrap">
                     <span class="text-slate-400 font-medium">Try:</span>
+                    <button onclick="sendQuickPrompt('I want an iPhone worth ₹1,00,000 in 6 months, saving ₹10,000 per month. Should I use EMI, FD, or SIP?')" class="px-2.5 py-1 rounded-full bg-white border border-slate-200 text-slate-700 hover:border-orange-400 hover:text-orange-600 transition shadow-2xs">
+                        🎯 iPhone ₹1L in 6 mo (EMI vs FD vs SIP)
+                    </button>
+                    <button onclick="sendQuickPrompt('How should I invest ₹15,000 per month for 3 years?')" class="px-2.5 py-1 rounded-full bg-white border border-slate-200 text-slate-700 hover:border-orange-400 hover:text-orange-600 transition shadow-2xs">
+                        📈 Invest ₹15k/mo for 3 yrs
+                    </button>
                     <button onclick="sendQuickPrompt('Can I buy iPhone 16 for ₹79,900 on 6-month EMI?')" class="px-2.5 py-1 rounded-full bg-white border border-slate-200 text-slate-700 hover:border-orange-400 hover:text-orange-600 transition shadow-2xs">
                         📱 Can I buy iPhone 16 on EMI?
                     </button>
@@ -241,10 +247,8 @@
                     <button onclick="sendQuickPrompt('How does my emergency cushion protect me?')" class="px-2.5 py-1 rounded-full bg-white border border-slate-200 text-slate-700 hover:border-orange-400 hover:text-orange-600 transition shadow-2xs">
                         🛡️ Emergency fund protection
                     </button>
-                    <button onclick="sendQuickPrompt('Can I afford a Goa trip for ₹35,000?')" class="px-2.5 py-1 rounded-full bg-white border border-slate-200 text-slate-700 hover:border-orange-400 hover:text-orange-600 transition shadow-2xs">
-                        🌴 Goa trip for ₹35,000?
-                    </button>
                 </div>
+
 
                 <!-- Chat Message Feed -->
                 <div id="chatMessages" class="flex-1 p-6 overflow-y-auto space-y-4">

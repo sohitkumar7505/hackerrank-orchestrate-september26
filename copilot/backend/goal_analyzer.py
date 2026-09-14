@@ -85,27 +85,29 @@ def extract_goal_from_text(
 def _heuristic_extract(message: str) -> GoalProfile:
     """Simple regex-based goal extraction as a fallback."""
     msg = message.lower()
+    cleaned = msg.replace(",", "")
 
     # Extract amount
     amount = 0.0
-    lakh_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:lakh|lac|l)", msg)
+    lakh_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:lakh|lakhs|lac|lacs|\bl\b)", cleaned)
     if lakh_match:
-        amount = float(lakh_match.group(1)) * 100000
+        amount = float(lakh_match.group(1)) * 100000.0
 
     if not amount:
-        k_match = re.search(r"₹?\s*(\d+(?:,\d+)*(?:\.\d+)?)\s*k\b", msg)
+        k_match = re.search(r"₹?\s*(\d+(?:\.\d+)?)\s*k\b", cleaned)
         if k_match:
-            amount = float(k_match.group(1).replace(",", "")) * 1000
+            amount = float(k_match.group(1)) * 1000.0
 
     if not amount:
-        num_match = re.search(r"₹?\s*(\d{4,}(?:,\d+)*(?:\.\d+)?)", msg)
-        if num_match:
-            amount = float(num_match.group(1).replace(",", ""))
+        # Match numbers 4 digits or longer
+        num_matches = [float(x) for x in re.findall(r"\b\d{4,}\b", cleaned)]
+        if num_matches:
+            amount = max(num_matches)
 
     # Extract horizon
     months = 12
-    year_match = re.search(r"(\d+)\s*year", msg)
-    month_match = re.search(r"(\d+)\s*month", msg)
+    year_match = re.search(r"(\d+)\s*(?:year|yr|years|yrs)", cleaned)
+    month_match = re.search(r"(\d+)\s*(?:month|mo|months|mos)", cleaned)
     if year_match:
         months = int(year_match.group(1)) * 12
     elif month_match:
@@ -114,36 +116,36 @@ def _heuristic_extract(message: str) -> GoalProfile:
     # Goal type heuristics
     goal_type = "purchase"
     item_name = "Goal"
-    if any(w in msg for w in ["iphone", "phone", "laptop", "macbook", "tv", "camera", "gadget"]):
+    if any(w in cleaned for w in ["iphone", "phone", "laptop", "macbook", "tv", "camera", "gadget"]):
         goal_type = "purchase"
         item_name = "Electronics / Gadget"
-    elif any(w in msg for w in ["trip", "vacation", "holiday", "travel", "tour"]):
+    elif any(w in cleaned for w in ["trip", "vacation", "holiday", "travel", "tour"]):
         goal_type = "vacation"
         item_name = "Vacation / Travel"
-    elif any(w in msg for w in ["car", "bike", "vehicle", "scooter"]):
+    elif any(w in cleaned for w in ["car", "bike", "vehicle", "scooter"]):
         goal_type = "car"
         item_name = "Vehicle"
-    elif any(w in msg for w in ["education", "course", "mba", "degree", "school", "college"]):
+    elif any(w in cleaned for w in ["education", "course", "mba", "degree", "school", "college"]):
         goal_type = "education"
         item_name = "Education"
-    elif any(w in msg for w in ["wedding", "marriage"]):
+    elif any(w in cleaned for w in ["wedding", "marriage"]):
         goal_type = "wedding"
         item_name = "Wedding"
-    elif any(w in msg for w in ["house", "flat", "apartment", "down payment", "home"]):
+    elif any(w in cleaned for w in ["house", "flat", "apartment", "down payment", "home"]):
         goal_type = "house_down_payment"
         item_name = "Home / Down Payment"
-    elif any(w in msg for w in ["emergency", "medical", "fund"]):
+    elif any(w in cleaned for w in ["emergency", "medical", "fund"]):
         goal_type = "emergency_fund"
         item_name = "Emergency Fund"
-    elif any(w in msg for w in ["retire", "retirement"]):
+    elif any(w in cleaned for w in ["retire", "retirement"]):
         goal_type = "retirement"
         item_name = "Retirement"
 
     # Monthly savings
     monthly = 0.0
-    save_match = re.search(r"save\s+₹?\s*(\d[\d,]*(?:\.\d+)?)\s*(?:per\s*month|\/month|pm|monthly)?", msg)
+    save_match = re.search(r"(?:save|saving|invest|investing)\s*(?:₹|rs\.?|inr)?\s*(\d+)", cleaned)
     if save_match:
-        monthly = float(save_match.group(1).replace(",", ""))
+        monthly = float(save_match.group(1))
 
     return GoalProfile(
         goal_type=goal_type,
@@ -153,6 +155,7 @@ def _heuristic_extract(message: str) -> GoalProfile:
         horizon_months=months,
         monthly_contribution=monthly,
     )
+
 
 
 # ─── Full Goal Evaluation ─────────────────────────────────────────────────────

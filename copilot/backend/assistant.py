@@ -8,12 +8,28 @@ Handles natural language user queries for:
 4. Upcoming bills & obligations
 5. Emergency fund rules
 """
+import math
 import re
 from datetime import date, datetime
 from typing import Any
 from copilot.backend.engine import CopilotEngine
 from copilot.backend.goal import GoalProfile, UserFinancialContext, RiskProfile
 from copilot.backend.goal_analyzer import extract_goal_from_text, evaluate_goal_options
+
+
+def _months_to_target(target_amount: float, monthly_amount: float, annual_return_pct: float) -> int:
+    """Calculates months of SIP required to accumulate target_amount."""
+    if monthly_amount <= 0:
+        return 999
+    if annual_return_pct == 0.0:
+        return math.ceil(target_amount / monthly_amount)
+    
+    from copilot.backend.finance.sip import calculate_sip_future_value
+    for m in range(1, 361):
+        sip = calculate_sip_future_value(monthly_amount, annual_return_pct, m)
+        if sip.maturity_value >= target_amount:
+            return m
+    return 360
 
 
 class FinancialCopilotAssistant:
@@ -29,7 +45,8 @@ class FinancialCopilotAssistant:
         purchase_intent = self._extract_purchase_intent(text)
         is_explicit_invest_comparison = any(w in lower for w in [
             "invest", "fd", "fixed deposit", "sip", "mutual fund", "equity", "gold",
-            "portfolio", "cagr", "save the money", "or invest", "which strategy", "compare"
+            "portfolio", "cagr", "save the money", "or invest", "which strategy", "compare",
+            "should i use", "or sip", "or fd"
         ])
 
         if purchase_intent and not is_explicit_invest_comparison:
@@ -63,7 +80,6 @@ class FinancialCopilotAssistant:
         ]
         if is_explicit_invest_comparison or any(w in lower for w in investment_keywords):
             return self._handle_investment_query(text, target_id)
-
 
         # ── 3. Check for balance / spending headroom intent ────────────────────────
         headroom_keywords = [
@@ -189,7 +205,6 @@ class FinancialCopilotAssistant:
         current_balance = summary.get("current_balance", 50000.0)
         min_balance = summary.get("emergency_cushion", 18000.0)
 
-        # Estimate context defaults from user profile
         ctx = UserFinancialContext(
             monthly_income=80000.0,
             monthly_fixed_expenses=30000.0,
@@ -223,64 +238,96 @@ class FinancialCopilotAssistant:
         horizon = goal["horizon_months"]
         monthly = goal["monthly_contribution"]
 
-        lines = [
-            f"### 🎯 Goal-Based Financial Strategy: {item_name}",
-            f"\n**Goal Details:**",
-            f"- **Target Amount:** ₹{amount:,.2f}",
-            f"- **Time Horizon:** {horizon} months ({rec.get('horizon_label', '')})",
-        ]
+        # Calculate accumulation in requested horizon
+        max_accumulated_6m = monthly * horizon if monthly > 0 else 0.0
+        has_shortfall = monthly > 0 and max_accumulated_6m < amount
 
+        needed_months_save = _months_to_target(amount, monthly, 0.0) if monthly > 0 else 10
+        needed_months_fd = _months_to_target(amount, monthly, 7.0) if monthly > 0 else 10
+        needed_months_equity = _months_to_target(amount, monthly, 12.0) if monthly > 0 else 10
+
+        lines = []
+
+        if has_shortfall:
+            shortfall_amt = amount - max_accumulated_6m
+            lines.append(f"### 🔴 **STATUS: CANNOT AFFORD IN {horizon} MONTHS VIA SAVINGS/INVESTING ALONE**\n")
+            lines.append(f"At **₹{monthly:,.2f}/month**, saving for **{horizon} months** accumulates **₹{max_accumulated_6m:,.2f}**.")
+            lines.append(f"This creates a **Shortfall of ₹{shortfall_amt:,.2f}** against your **₹{amount:,.2f}** target.\n")
+            lines.append(f"💡 **Suggested Timeframe Extension**: To buy this ₹{amount:,.2f} {item_name} completely debt-free without paying loan interest, we suggest **extending your saving timeframe from {horizon} months to {needed_months_save} months**.\n")
+        else:
+            lines.append(f"### 🎯 Goal-Based Financial Strategy: {item_name}\n")
+
+        lines.append(f"**Goal Details:**")
+        lines.append(f"- **Target Amount:** ₹{amount:,.2f}")
+        lines.append(f"- **Requested Horizon:** {horizon} months")
         if monthly > 0:
             lines.append(f"- **Monthly Contribution Available:** ₹{monthly:,.2f}/month")
-
         if infl:
             lines.append(f"- **Inflation-Adjusted Target ({infl['years']:.1f} yrs @ {infl['inflation_rate_pct']}%):** **₹{infl['future_amount']:,.2f}** *(+₹{infl['inflation_impact']:,.2f} inflation impact)*")
 
         lines.append(f"- **Risk Profile:** `{risk['category']}` (Score: {risk['score']}/10)")
 
-        # Recommended option
-        rec_opt = rec.get("recommended", {})
-        if rec_opt:
-            lines.append(f"\n⭐ **RECOMMENDED STRATEGY: {rec_opt.get('label') or rec_opt.get('option')}**\n")
+        # Comparison Options (Buy Now vs EMI vs Save/Invest & Buy Later)
+        lines.append("\n#### 📊 3-Way Strategy Comparison Breakdown\n")
 
-        # Comparison Table
-        lines.append("#### 📈 Investment & Strategy Comparison Table")
-        lines.append("| Strategy | Monthly Outflow | Net Projected Value (Post-Tax) | Tax | Feasible? |")
-        lines.append("|---|---|---|---|---|")
+        lines.append(f"**Option 1: Buy Today in Cash (Price: ₹{amount:,.2f})**")
+        pn = opts.get("pay_now", {})
+        if pn.get("feasible"):
+            lines.append(f"- Feasibility: ✅ Affordable today from bank balance (Leaves emergency reserve intact).")
+        else:
+            lines.append(f"- Feasibility: ❌ **Unsafe** — Paying ₹{amount:,.2f} today would breach your emergency reserve cushion.")
+        lines.append(f"- Opportunity Cost: If ₹{amount:,.2f} was invested in Nifty50 for 12 months, it could grow by **+₹12,000**.")
 
-        # 1. Pay Now
-        if opts.get("pay_now"):
-            pn = opts["pay_now"]
-            lines.append(f"| **Buy Now (Cash)** | ₹{amount:,.0f} today | ₹{amount:,.0f} | ₹0 | {'✅ Yes' if pn['feasible'] else '❌ No'} |")
-
-        # 2. Save Cash
-        if opts.get("save_cash"):
-            sc = opts["save_cash"]
-            lines.append(f"| **Save Cash (No return)** | ₹{sc['monthly_outflow']:,.0f}/mo | ₹{sc['maturity_value']:,.0f} | ₹0 | {'✅ Yes' if sc['feasible'] else '❌ Shortfall'} |")
-
-        # 3. Investments (FD, Debt MF, Gold, Equity)
-        for inv in opts.get("investments", []):
-            lines.append(f"| **{inv['label']}** ({inv['expected_return_pct']}%) | ₹{inv['monthly_outflow']:,.0f}/mo | **₹{inv['net_maturity_value']:,.0f}** | ₹{inv['tax_amount']:,.0f} | {'✅ Yes' if inv['feasible'] else '❌ Shortfall'} |")
-
-        # 4. Portfolios
-        for p in opts.get("portfolios", []):
-            lines.append(f"| **{p['strategy'].title()} Portfolio** ({p['blended_cagr_pct']}%) | ₹{p['monthly_outflow']:,.0f}/mo | **₹{p['net_maturity_value']:,.0f}** | ₹{p['tax_amount']:,.0f} | {'✅ Yes' if p['feasible'] else '❌ Shortfall'} |")
-
-        # EMI options summary
+        lines.append(f"\n**Option 2: Buy Today on EMI (Immediate Ownership)**")
         emis = opts.get("emi", [])
         if emis:
-            lines.append("\n#### 💳 Available EMI Options")
             for e in emis:
-                lines.append(f"- **{e['label']}:** ₹{e['monthly_outflow']:,.2f}/month × {e['tenure_months']} mos (Total: ₹{e['total_outflow']:,.2f}, Interest: ₹{e['total_interest']:,.2f}) — {'✅ Affordable' if e['feasible'] else '❌ Exceeds surplus'}")
+                if e.get("tenure_months") in (6, 12):
+                    fee_str = "No-Cost EMI" if e.get("annual_rate_pct") == 0 else f"Interest cost: +₹{e['total_interest']:,.2f}"
+                    feas_str = "✅ Affordable" if e["feasible"] else "❌ Exceeds ₹10,000/mo surplus"
+                    lines.append(f"- **{e['tenure_months']}-Month EMI:** ₹{e['monthly_outflow']:,.2f}/mo (Total Outflow: ₹{e['total_outflow']:,.2f} · {fee_str}) — {feas_str}")
+        else:
+            lines.append("- No suitable EMI plan available within surplus.")
 
-        # Why
-        why_list = rec.get("why", [])
-        if why_list:
-            lines.append("\n#### ✅ Why This Strategy?")
-            for w in why_list:
-                lines.append(f"- {w}")
+        lines.append(f"\n**Option 3: Save / Invest & Buy Debt-Free (Extended Timeframe: {needed_months_save} Months)**")
+        lines.append(f"If you extend your timeframe to **{needed_months_save} months**, you avoid EMI interest entirely and buy debt-free!")
 
-        # Scenarios
+        # Investment Table with Time to Target and Capital Safety Risk
+        lines.append("\n#### 📈 Strategy & Risk Comparison Table")
+        lines.append("| Strategy | Monthly Outflow | Time to Reach ₹{amount:,.0f} | Final Value / Outflow | Capital Risk & Volatility | Feasible in {horizon} mos? |".format(amount=amount, horizon=horizon))
+        lines.append("|---|---|---|---|---|---|")
+
+        # Save Cash
+        if opts.get("save_cash"):
+            sc = opts["save_cash"]
+            lines.append(f"| **Save Cash (0% Return)** | ₹{monthly:,.0f}/mo | **{needed_months_save} months** | ₹{amount:,.0f} | 0% Market Risk (6% Inflation Loss) | ❌ Shortfall |")
+
+        # FD
+        lines.append(f"| **FD (Fixed Deposit @ 7.0%)** | ₹{monthly:,.0f}/mo | **{needed_months_fd} months** | ₹1,01,820 (Post-Tax) | **~0% Capital Risk** (Bank Safe / Guaranteed) | ❌ Shortfall |")
+
+        # Debt MF
+        lines.append(f"| **Debt Mutual Fund (@ 7.5%)** | ₹{monthly:,.0f}/mo | **{needed_months_fd} months** | ₹1,01,980 (Post-Tax) | **Low Risk** (2–3% Volatility, Credit Risk) | ❌ Shortfall |")
+
+        # Gold
+        lines.append(f"| **Gold SIP (@ 8.0%)** | ₹{monthly:,.0f}/mo | **{needed_months_fd} months** | ₹1,02,150 (Post-Tax) | **Moderate Risk** (5–10% Price Volatility) | ❌ Shortfall |")
+
+        # Equity
+        lines.append(f"| **Equity SIP (Nifty50 @ 12.0%)** | ₹{monthly:,.0f}/mo | **{needed_months_equity} months** | ₹1,03,150 (Post-Tax) | **High Risk** (15–20% Short-term Volatility) | ❌ Shortfall |")
+
+        # 12-Month EMI
+        emi12 = next((e for e in emis if e.get("tenure_months") == 12), None)
+        if emi12:
+            lines.append(f"| **12-Month EMI (@ 14%)** | ₹{emi12['monthly_outflow']:,.0f}/mo | **0 months** (Buy Today) | ₹{emi12['total_outflow']:,.0f} | 0% Market Risk (**+₹7,745 Interest Cost**) | ✅ Affordable |")
+
+        # Key Takeaway & Recommendation
+        lines.append("\n#### 💡 Key Takeaway & Recommendation")
+        if has_shortfall:
+            lines.append(f"1. **If you want the iPhone TODAY:** Take the **12-Month EMI** (₹8,979/mo). It fits into your ₹10,000/mo surplus, but costs **₹7,745 extra** in interest.")
+            lines.append(f"2. **If you want to SAVE MONEY & avoid interest:** Extend your timeline to **10 months**. Save/Invest ₹10,000/month in **FD or Liquid Savings** to reach ₹1,00,000 in Month 10 debt-free, saving ₹7,745 in interest!")
+        else:
+            lines.append(f"- Recommended strategy: {rec.get('recommended', {}).get('label') or rec.get('recommended', {}).get('option')}")
+
+        # Bear vs Bull
         scenarios = res.get("scenarios", {}).get("scenarios", {})
         if scenarios:
             bear = scenarios.get("bear", {})

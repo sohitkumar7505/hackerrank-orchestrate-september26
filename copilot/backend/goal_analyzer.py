@@ -242,20 +242,22 @@ def evaluate_goal_options(
     # ── Option 3: Save and buy later ──────────────────────────────────────
     if monthly > 0:
         months_to_save = max(1, round(amount / monthly))
+        accumulated_in_horizon = round(monthly * horizon, 2)
         save_option = {
             "option": "save_cash",
             "label": "Save Cash (No investment return)",
-            "feasible": True,
+            "feasible": accumulated_in_horizon >= amount,
             "monthly_outflow": monthly,
-            "total_invested": monthly * months_to_save,
-            "maturity_value": monthly * months_to_save,
+            "total_invested": accumulated_in_horizon,
+            "maturity_value": accumulated_in_horizon,
             "time_to_goal_months": months_to_save,
             "return_pct": 0.0,
             "pros": ["No risk", "No debt"],
-            "cons": [f"Takes {months_to_save} months", "Inflation erodes purchasing power"],
+            "cons": [f"Takes {months_to_save} months to reach full amount", "Inflation erodes purchasing power"],
         }
     else:
         save_option = None
+
 
     # ── Options 4-7: Investment options ─────────────────────────────────────
     investment_options = []
